@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: flight-price-prediction-deployment
+  name: flight-price-prediction
 spec:
   replicas: 3
   selector:
@@ -13,14 +13,14 @@ spec:
         app: flight-price-prediction
     spec:
       containers:
-      - name: flight-price-prediction-container
-        image: varghesetito/flight-price-prediction
-        resources:
-          limits:
-            memory: "128Mi"
-            cpu: "500m"
-        ports:
-        - containerPort: 8080
-        env:
-        - name: FLASK_APP
-          value: "production"
+        - name: api
+          image: YOUR_DOCKERHUB_USERNAME/flight-price-prediction:latest
+          ports:
+            - containerPort: 8000
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+          readinessProbe:
+            httpGet: { path: /, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10

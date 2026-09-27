@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Flight Price Prediction</title></head>
+<body><h1>Flight Price Prediction</h1>
+<form id="prediction-form">
+  <label>From <input name="from" required></label><br>
+  <label>To <input name="to" required></label><br>
+  <label>Flight type <select name="flightType"><option>economic</option><option>firstClass</option><option>premium</option></select></label><br>
+  <label>Agency <select name="agency"><option>FlyingDrops</option><option>Rainbow</option><option>CloudFy</option></select></label><br>
+  <label>Date <input type="date" name="date" required></label><br><button>Predict</button>
+</form><p id="result"></p>
+<script>document.querySelector('#prediction-form').addEventListener('submit', async e => {e.preventDefault(); const r=await fetch('/predict',{method:'POST',body:new FormData(e.target)}); const d=await r.json(); document.querySelector('#result').textContent=d.predicted_price ? `Predicted price: ${d.currency} ${d.predicted_price}` : d.error;});</script>
+</body></html>

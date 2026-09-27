@@ -1,121 +1,76 @@
-#Import Libraries:
-import mlflow
-import pandas as pd
+"""Train and version the flight-price regression model.
+
+Run from the repository root:
+    py -3.11 Productionisation_Travel_ML_System/Productionisation_ML_Systems/flight-price-pred-mlflow.py
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import joblib
 import numpy as np
-import logging
-
-from sklearn.model_selection import train_test_split,GridSearchCV
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.preprocessing import StandardScaler
+import pandas as pd
+from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+
+ROOT = Path(__file__).resolve().parents[2]
+DATA_PATH = ROOT / "flights.csv"
+MODEL_DIR = Path(__file__).resolve().parent / "model"
 
 
-#Configure Logging:
-logging.basicConfig(level=logging.WARN)
-logger = logging.getLogger(__name__)
+def make_features(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+    """Create features available at booking time and the flight-price target."""
+    frame = data.copy()
+    frame["date"] = pd.to_datetime(frame["date"], format="%m/%d/%Y")
+    frame["week_no"] = frame["date"].dt.isocalendar().week.astype(int)
+    frame["week_day"] = frame["date"].dt.weekday
+    frame["day"] = frame["date"].dt.day
+    features = frame[["from", "to", "flightType", "agency", "week_no", "week_day", "day"]]
+    return features, frame["price"]
 
-#Set MLflow Tracking URI:
-mlflow.set_tracking_uri("http://127.0.0.1:8000")
 
-#Start an MLflow Run:
-mlflow.start_run()
-#mlflow.create_experiment("Flight_package_prediction")
-#Load Data:
-df = pd.read_csv("flights.csv")
+def train() -> dict[str, float]:
+    data = pd.read_csv(DATA_PATH)
+    features, target = make_features(data)
+    x_train, x_test, y_train, y_test = train_test_split(
+        features, target, test_size=0.2, random_state=42
+    )
+    categorical = ["from", "to", "flightType", "agency"]
+    numeric = ["week_no", "week_day", "day"]
+    preprocessing = ColumnTransformer(
+        [("categorical", OneHotEncoder(handle_unknown="ignore"), categorical), ("numeric", "passthrough", numeric)]
+    )
+    model = Pipeline(
+        [("preprocessing", preprocessing), ("regressor", RandomForestRegressor(n_estimators=100, max_depth=15, min_samples_split=10, random_state=42, n_jobs=-1))]
+    )
+    model.fit(x_train, y_train)
+    predictions = model.predict(x_test)
+    metrics = {
+        "mae": float(mean_absolute_error(y_test, predictions)),
+        "rmse": float(np.sqrt(mean_squared_error(y_test, predictions))),
+        "r2": float(r2_score(y_test, predictions)),
+    }
+    MODEL_DIR.mkdir(exist_ok=True)
+    joblib.dump(model, MODEL_DIR / "flight_price_model.joblib")
+    (MODEL_DIR / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
-# Change travel date into a datetime object
-df['date'] = pd.to_datetime(df['date'])
-        
-# Extracting WeekNo., Month, Year, Weekday from date column
-df['week_day'] = df['date'].dt.weekday
-df['month'] = df['date'].dt.month
-df['week_no'] = df['date'].dt.isocalendar().week
-df['year'] = df['date'].dt.year
-df['day'] = df['date'].dt.day
-       
-# Renaming the Column name
-df.rename(columns={"to":"destination"},inplace=True)
-        
-# Creating a new feature using distance and time columns
-df['flight_speed']=round(df['distance']/df['time'],2)
-        
-# Example of one-hot encoding
-df = pd.get_dummies(df, columns=['from','destination','flightType','agency'])
+    try:
+        import mlflow
+        import mlflow.sklearn
+        mlflow.set_experiment("flight-price-prediction")
+        with mlflow.start_run():
+            mlflow.log_params({"model": "RandomForestRegressor", "test_size": 0.2, "random_state": 42})
+            mlflow.log_metrics(metrics)
+            mlflow.sklearn.log_model(model, "flight_price_model")
+    except ImportError:
+        print("MLflow is not installed; saved local artifacts only.")
+    return metrics
 
-        
-#Dropping irrelavent features
-df.drop(columns=['time','flight_speed','month','year','distance'],axis=1,inplace=True)
-        
-#Separate features (X) and target variable (Y)
-X = df.drop('price', axis=1)  # Features
-Y = df['price']               # Target variable
-               
-        
-#Renaming the coulmns 
-X.rename(columns={'from_Sao Paulo (SP)':'from_Sao_Paulo (SP)','from_Rio de Janeiro (RJ)':'from_Rio_de_Janeiro (RJ)','from_Campo Grande (MS)':'from_Campo_Grande (MS)',
-                                  'destination_Sao Paulo (SP)':'destination_Sao_Paulo (SP)','destination_Rio de Janeiro (RJ)':'destination_Rio_de_Janeiro (RJ)','destination_Campo Grande (MS)':'destination_Campo_Grande (MS)'},inplace=True)
 
-#Sorting the features based on our output requirments
-features_ordering=['from_Florianopolis (SC)','from_Sao_Paulo (SP)','from_Salvador (BH)','from_Brasilia (DF)','from_Rio_de_Janeiro (RJ)','from_Campo_Grande (MS)','from_Aracaju (SE)',
- 'from_Natal (RN)','from_Recife (PE)','destination_Florianopolis (SC)','destination_Sao_Paulo (SP)','destination_Salvador (BH)','destination_Brasilia (DF)','destination_Rio_de_Janeiro (RJ)',
- 'destination_Campo_Grande (MS)','destination_Aracaju (SE)','destination_Natal (RN)','destination_Recife (PE)','flightType_economic','flightType_firstClass','flightType_premium',
- 'agency_Rainbow','agency_CloudFy','agency_FlyingDrops','week_no','week_day','day']
-        
-#Ordering features based on flask output
-X= X[features_ordering]
-
-#Split Data into Train and Test Sets:
-X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.20, random_state=42)
-
-#Standardize Data:
-scaler_new = StandardScaler()
-X_train = scaler_new.fit_transform(X_train)
-X_test = scaler_new.transform(X_test)
-
-#Hyperparameter tuning and cross validation using GridsearchCV      
-param_dict = {
-            'n_estimators': [300],
-            'max_depth': [15],
-            'min_samples_split': [10],
-            'max_features': ['sqrt',27],
-            'n_jobs': [2]
-        }
-rf_model = RandomForestRegressor(random_state=42)
-rf_grid = GridSearchCV(estimator=rf_model,
-                                     param_grid=param_dict,
-                                     cv=3, verbose=2, scoring='r2')
-
-rf_grid.fit(X_train, Y_train) 
-            
-rf_optimal_model = rf_grid.best_estimator_
-
-Y_train_pred = rf_optimal_model.predict(X_train)
-Y_test_pred = rf_optimal_model.predict(X_test)
-
-actual=Y_test
-predicted=Y_test_pred
-
-#Evaluation Metrics
-MSE = mean_squared_error(actual, predicted)
-MAE = mean_absolute_error(actual, predicted)
-RMSE = np.sqrt(MSE)
-R2 = r2_score(actual, predicted) 
-
-#Log Parameters and Metrics to MLflow:
-mlflow.log_param("test_size", 0.3)
-mlflow.log_param("random_state", 42)
-mlflow.log_param("n_estimators", 300)
-mlflow.log_param("max_depth", 15)
-mlflow.log_metric("MAE", MAE)
-mlflow.log_metric("MSE", MSE)
-mlflow.log_metric("RMSE", RMSE)
-mlflow.log_metric("R2", R2)
-
-#Log the Trained Model to MLflow:
-mlflow.sklearn.log_model(rf_optimal_model, "random_forest_model")
-
-#Register the Model Version:
-#mlflow.register_model("runs:/<RUN_ID>/random_forest_model", "FlightPackagePriceModel")
-
-#End the MLflow Run:
-mlflow.end_run()
+if __name__ == "__main__":
+    print(json.dumps(train(), indent=2))
