@@ -1,7 +1,5 @@
 """Train a reproducible gender-classification baseline from users.csv.
 
-This is an educational classification exercise. Do not use its predictions for
-eligibility, pricing, employment, or other consequential decisions.
 """
 from __future__ import annotations
 
